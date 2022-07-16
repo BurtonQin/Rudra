@@ -2,7 +2,7 @@ use super::*;
 
 // Note that len(adt_generics_iter) == len(substs_generics_iter)
 pub fn generic_param_idx_mapper<'tcx>(
-    adt_generics: &Vec<GenericParamDef>,
+    adt_generics: &[GenericParamDef],
     substs_generics: &'tcx List<subst::GenericArg<'tcx>>,
 ) -> FxHashMap<PreMapIdx, PostMapIdx> {
     let mut generic_param_idx_mapper = FxHashMap::default();
@@ -26,7 +26,7 @@ pub fn generic_param_idx_mapper<'tcx>(
             */
         }
     }
-    return generic_param_idx_mapper;
+    generic_param_idx_mapper
 }
 
 const OWNING_ADTS: &[&[&str]] = &[&["core", "option", "Option"], &["core", "result", "Result"]];
@@ -64,8 +64,8 @@ pub fn owned_generic_params_in_ty<'tcx>(
 
                 // Try limiting to cases like Option<T> & Result<T, !> to reduce FP rate.
                 for path in OWNING_ADTS {
-                    if ext.match_def_path(adt_def.did, path) {
-                        for adt_variant in adt_def.variants.iter() {
+                    if ext.match_def_path(adt_def.did(), path) {
+                        for adt_variant in adt_def.variants().iter() {
                             for adt_field in adt_variant.fields.iter() {
                                 let ty = adt_field.ty(tcx, substs);
                                 if let ty::TyKind::Param(_) = ty.kind() {
@@ -77,10 +77,10 @@ pub fn owned_generic_params_in_ty<'tcx>(
                 }
             }
             ty::TyKind::Array(ty, _) => {
-                worklist.push(ty);
+                worklist.push(*ty);
             }
             ty::TyKind::Tuple(substs) => {
-                for ty in substs.types() {
+                for ty in *substs {
                     worklist.push(ty);
                 }
             }
@@ -88,7 +88,7 @@ pub fn owned_generic_params_in_ty<'tcx>(
         }
     }
 
-    owned_generic_params.into_iter().map(|idx| PreMapIdx(idx))
+    owned_generic_params.into_iter().map(PreMapIdx)
 }
 
 // Within the given `ty`,
@@ -114,7 +114,7 @@ pub fn borrowed_generic_params_in_ty<'tcx>(
                 }
             }
             ty::TyKind::Ref(_, borrowed_ty, Mutability::Not) => {
-                worklist.push((borrowed_ty, true));
+                worklist.push((*borrowed_ty, true));
             }
             ty::TyKind::Adt(adt_def, substs) => {
                 if ty.is_box() {
@@ -122,7 +122,7 @@ pub fn borrowed_generic_params_in_ty<'tcx>(
                     continue;
                 }
 
-                for adt_variant in adt_def.variants.iter() {
+                for adt_variant in adt_def.variants().iter() {
                     for adt_field in adt_variant.fields.iter() {
                         let adt_field_ty = adt_field.ty(tcx, substs);
                         // We peel off just one level of ADT layer when trying to find exposed `&T`.
@@ -135,10 +135,10 @@ pub fn borrowed_generic_params_in_ty<'tcx>(
                 }
             }
             ty::TyKind::Array(ty, _) => {
-                worklist.push((ty, borrowed));
+                worklist.push((*ty, borrowed));
             }
             ty::TyKind::Tuple(substs) => {
-                for ty in substs.types() {
+                for ty in *substs {
                     worklist.push((ty, borrowed));
                 }
             }
@@ -146,12 +146,10 @@ pub fn borrowed_generic_params_in_ty<'tcx>(
         }
     }
 
-    borrowed_generic_params
-        .into_iter()
-        .map(|idx| PreMapIdx(idx))
+    borrowed_generic_params.into_iter().map(PreMapIdx)
 }
 
-const PSEUDO_OWNED: [&'static str; 4] = [
+const PSEUDO_OWNED: [&str; 4] = [
     "std::convert::Into",
     "core::convert::Into",
     "std::iter::IntoIterator",
@@ -165,8 +163,8 @@ const PSEUDO_OWNED: [&'static str; 4] = [
 //    impl<P, Q> Channel<P, Q> {
 //        fn send_p<M>(&self, _msg: M) where M: Into<P>, {}
 //    }
-pub fn find_pseudo_owned_in_fn_ctxt<'tcx>(
-    tcx: TyCtxt<'tcx>,
+pub fn find_pseudo_owned_in_fn_ctxt(
+    tcx: TyCtxt<'_>,
     fn_did: DefId,
 ) -> FxHashMap<PreMapIdx, PreMapIdx> {
     let mut fn_ctxt_pseudo_owned_param_idx_map = FxHashMap::default();
@@ -184,12 +182,12 @@ pub fn find_pseudo_owned_in_fn_ctxt<'tcx>(
                 // trait_predicate =>  M: Into<P>
                 //                     |    |
                 //             (param_ty)  (trait_predicate.trait_ref)
-                if PSEUDO_OWNED.contains(&tcx.def_path_str(trait_predicate.def_id()).as_str()) {
-                    if substs_types.len() > 1 {
-                        if let ty::TyKind::Param(param_1) = substs_types[1].kind() {
-                            fn_ctxt_pseudo_owned_param_idx_map
-                                .insert(PreMapIdx(param_ty.index), PreMapIdx(param_1.index));
-                        }
+                if PSEUDO_OWNED.contains(&tcx.def_path_str(trait_predicate.def_id()).as_str())
+                    && substs_types.len() > 1
+                {
+                    if let ty::TyKind::Param(param_1) = substs_types[1].kind() {
+                        fn_ctxt_pseudo_owned_param_idx_map
+                            .insert(PreMapIdx(param_ty.index), PreMapIdx(param_1.index));
                     }
                 }
             }

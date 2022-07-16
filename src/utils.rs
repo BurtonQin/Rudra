@@ -1,8 +1,8 @@
 use std::io::Write;
 use std::rc::Rc;
 
+use rustc_middle::mir::write_mir_pretty;
 use rustc_middle::ty::{Instance, InstanceDef, TyCtxt};
-use rustc_mir::util::write_mir_pretty;
 use rustc_span::{CharPos, Span};
 
 use termcolor::{Buffer, Color, ColorSpec, WriteColor};
@@ -149,9 +149,9 @@ impl<'tcx> ColorSpan<'tcx> {
                 col: end_loc.col,
                 id: event_id,
             });
-            return true;
+            true
         } else {
-            return false;
+            false
         }
     }
 
@@ -209,7 +209,7 @@ impl<'tcx> ColorSpan<'tcx> {
 
                 // Handle reset
                 handle_color_event(&mut buffer, current_col);
-                write!(buffer, "\n").ok();
+                writeln!(buffer).ok();
             }
 
             // Reset the color after printing the span just in case
@@ -225,12 +225,12 @@ impl<'tcx> ColorSpan<'tcx> {
     }
 }
 
-pub fn print_span<'tcx>(tcx: TyCtxt<'tcx>, span: &Span) {
+pub fn print_span(tcx: TyCtxt<'_>, span: &Span) {
     let source_map = tcx.sess.source_map();
     eprintln!(
         "{}\n{}\n",
-        source_map.span_to_diagnostic_string(span.clone()),
-        source_map.span_to_snippet(span.clone()).unwrap()
+        source_map.span_to_diagnostic_string(*span),
+        source_map.span_to_snippet(*span).unwrap()
     );
 }
 
@@ -240,8 +240,8 @@ pub fn print_span_to_file<'tcx>(tcx: TyCtxt<'tcx>, span: &Span, output_name: &st
     let filename = format!("{}/logs/{}", sysroot, output_name);
     let content = format!(
         "{}\n{}\n",
-        source_map.span_to_diagnostic_string(span.clone()),
-        source_map.span_to_snippet(span.clone()).unwrap()
+        source_map.span_to_diagnostic_string(*span),
+        source_map.span_to_snippet(*span).unwrap()
     );
     std::fs::write(filename, content).expect("Unable to write file");
 }
@@ -254,7 +254,7 @@ pub fn print_mir<'tcx>(tcx: TyCtxt<'tcx>, instance: Instance<'tcx>) {
             if tcx.is_mir_available(instance.def.def_id()) {
                 let stderr = std::io::stderr();
                 let mut handle = stderr.lock();
-                if let Err(_) = write_mir_pretty(tcx, Some(instance.def.def_id()), &mut handle) {
+                if write_mir_pretty(tcx, Some(instance.def.def_id()), &mut handle).is_err() {
                     error!(
                         "Cannot print MIR: error while printing `{:?}`",
                         instance.def.def_id()
@@ -278,7 +278,7 @@ pub fn print_mir_to_file<'tcx>(tcx: TyCtxt<'tcx>, instance: Instance<'tcx>, outp
             if tcx.is_mir_available(instance.def.def_id()) {
                 let mut handle =
                     std::fs::File::create(filename).expect("Error while creating file");
-                if let Err(_) = write_mir_pretty(tcx, Some(instance.def.def_id()), &mut handle) {
+                if write_mir_pretty(tcx, Some(instance.def.def_id()), &mut handle).is_err() {
                     error!(
                         "Cannot print MIR: error while printing `{:?}`",
                         instance.def.def_id()

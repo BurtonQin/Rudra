@@ -9,7 +9,7 @@ pub fn phantom_indices<'tcx>(tcx: TyCtxt<'tcx>, adt_ty: Ty<'tcx>) -> Vec<u32> {
     let (mut in_phantom, mut out_phantom) = (FxHashSet::default(), FxHashSet::default());
 
     if let ty::TyKind::Adt(adt_def, substs) = adt_ty.kind() {
-        for variant in &adt_def.variants {
+        for variant in adt_def.variants() {
             for field in &variant.fields {
                 let field_ty = field.ty(tcx, substs);
 
@@ -39,10 +39,8 @@ pub fn phantom_indices<'tcx>(tcx: TyCtxt<'tcx>, adt_ty: Ty<'tcx>) -> Vec<u32> {
     }
 
     // Check for params that are both inside & outside of `PhantomData<_>`
-    let in_phantom = in_phantom
+    in_phantom
         .into_iter()
         .filter(|e| !out_phantom.contains(e))
-        .collect();
-
-    return in_phantom;
+        .collect()
 }

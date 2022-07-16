@@ -82,11 +82,9 @@ fn run_compiler(
     );
 
     // Invoke compiler, and handle return code.
-    let exit_code = rustc_driver::catch_with_exit_code(move || {
+    rustc_driver::catch_with_exit_code(move || {
         rustc_driver::RunCompiler::new(&args, callbacks).run()
-    });
-
-    exit_code
+    })
 }
 
 fn parse_config() -> (RudraConfig, Vec<String>) {

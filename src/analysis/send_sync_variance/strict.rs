@@ -16,7 +16,7 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
         let tcx = rcx.tcx();
         if let Some(trait_ref) = tcx.impl_trait_ref(impl_id) {
             if let ty::TyKind::Adt(adt_def, impl_trait_substs) = trait_ref.self_ty().kind() {
-                let adt_did = adt_def.did;
+                let adt_did = adt_def.did();
                 let adt_ty = tcx.type_of(adt_did);
 
                 let mut need_send_sync: FxHashMap<PostMapIdx, BehaviorFlag> = FxHashMap::default();
@@ -103,7 +103,7 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                             if let Some(mapped_idx) = generic_param_idx_map.get(&pre_map_idx) {
                                 let trait_did = trait_predicate.def_id();
                                 if trait_did == sync_trait_def_id {
-                                    if let Some(analyses) = need_send_sync.get_mut(&mapped_idx) {
+                                    if let Some(analyses) = need_send_sync.get_mut(mapped_idx) {
                                         analyses.remove(BehaviorFlag::API_SYNC_FOR_SYNC);
                                         analyses.remove(BehaviorFlag::NAIVE_SYNC_FOR_SYNC);
                                     }
@@ -113,7 +113,7 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                                 } else if (trait_did == send_trait_def_id)
                                     || (trait_did == copy_trait_def_id)
                                 {
-                                    if let Some(analyses) = need_send_sync.get_mut(&mapped_idx) {
+                                    if let Some(analyses) = need_send_sync.get_mut(mapped_idx) {
                                         analyses.remove(BehaviorFlag::API_SEND_FOR_SYNC);
                                     }
                                 }
@@ -137,7 +137,7 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                 };
             }
         }
-        return None;
+        None
     }
 
     /// Returns `Some(DefId of ADT)` if `impl Send` for the ADT looks suspicious
@@ -152,7 +152,7 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
         let tcx = self.rcx.tcx();
         if let Some(trait_ref) = tcx.impl_trait_ref(impl_id) {
             if let ty::TyKind::Adt(adt_def, impl_trait_substs) = trait_ref.self_ty().kind() {
-                let adt_did = adt_def.did;
+                let adt_did = adt_def.did();
                 let adt_ty = tcx.type_of(adt_did);
 
                 // Keep track of generic params that need to be `Send`.
@@ -221,7 +221,7 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                                     || trait_did == sync_trait_def_id
                                     || trait_did == copy_trait_def_id
                                 {
-                                    need_send_sync.remove(&mapped_idx);
+                                    need_send_sync.remove(mapped_idx);
                                     for analyses in need_send_sync.values_mut() {
                                         analyses.remove(BehaviorFlag::RELAX_SEND);
                                     }
@@ -246,6 +246,6 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                 };
             }
         }
-        return None;
+        None
     }
 }

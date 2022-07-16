@@ -10,15 +10,12 @@ mod utils;
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
-use rustc_hir::{
-    GenericBound, GenericParam, GenericParamKind, HirId, Impl, ImplPolarity, ItemId, ItemKind,
-    Node, WherePredicate,
-};
+use rustc_hir::{GenericBound, HirId, Impl, ImplPolarity, ItemId, ItemKind, Node, WherePredicate};
 use rustc_middle::mir::terminator::Mutability;
 use rustc_middle::ty::{
     self,
     subst::{self, GenericArgKind},
-    AssocKind, GenericParamDef, GenericParamDefKind, List, PredicateKind, Ty, TyCtxt, TyS,
+    AssocKind, GenericParamDef, GenericParamDefKind, List, PredicateKind, Ty, TyCtxt,
 };
 use rustc_span::symbol::sym;
 
@@ -144,7 +141,7 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
 /// Check Send Trait
 fn send_trait_def_id<'tcx>(tcx: TyCtxt<'tcx>) -> AnalysisResult<'tcx, DefId> {
     convert!(tcx
-        .get_diagnostic_item(sym::send_trait)
+        .get_diagnostic_item(sym::Send)
         .context(SendTraitNotFound))
 }
 

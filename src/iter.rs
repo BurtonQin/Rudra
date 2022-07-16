@@ -14,12 +14,12 @@ pub struct LocalTraitIter {
 }
 
 impl LocalTraitIter {
-    pub fn new<'tcx>(rcx: RudraCtxt<'tcx>, trait_def_id: DefId) -> Self {
+    pub fn new(rcx: RudraCtxt<'_>, trait_def_id: DefId) -> Self {
         let local_trait_impl_map = rcx.tcx().all_local_trait_impls(());
         let impl_id_vec = local_trait_impl_map
             .get(&trait_def_id)
             .map(Clone::clone)
-            .unwrap_or(Vec::new());
+            .unwrap_or_default();
         LocalTraitIter {
             inner: impl_id_vec.into_iter(),
         }

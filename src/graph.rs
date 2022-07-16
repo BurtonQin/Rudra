@@ -47,7 +47,7 @@ impl<'a, G: Graph, T: GraphTaint> TaintAnalyzer<'a, G, T> {
     }
 
     pub fn graph(&self) -> &G {
-        &self.graph
+        self.graph
     }
 
     pub fn mark_source(&mut self, id: usize, taint: &T) {
@@ -106,7 +106,7 @@ impl<'a, G: Graph, T: GraphTaint> TaintAnalyzer<'a, G, T> {
             }
         }
 
-        return ret;
+        ret
     }
 }
 
@@ -271,7 +271,7 @@ impl<'a, G: Graph> Scc<'a, G> {
     }
 
     pub fn graph(&self) -> &G {
-        &self.graph
+        self.graph
     }
 
     pub fn group_of_node(&self, idx: usize) -> usize {

@@ -19,33 +19,25 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
             if let Some(node) = map.find(hir_id);
             if let Node::Item(item) = node;
             if let ItemKind::Impl(Impl {
-                ref generics,
+                generics,
                 of_trait: Some(ref trait_ref),
                 ..
             }) = item.kind;
             if Some(send_trait_def_id) == trait_ref.trait_def_id();
             then {
                 // If `impl Send` doesn't involve generic parameters, don't catch it.
-                if generics.params.len() == 0 {
-                    return false;
-                }
-
-                // Inspect immediate trait bounds on generic parameters
-                if self.trait_in_imm_relaxed(
-                    &[send_trait_def_id, sync_trait_def_id],
-                    generics.params
-                ) {
+                if generics.params.is_empty() {
                     return false;
                 }
 
                 // Inspect trait bounds in where clauses
                 return !self.trait_in_where_relaxed(
                     &[send_trait_def_id, sync_trait_def_id],
-                    generics.where_clause.predicates
+                    generics.predicates
                 );
             }
         }
-        return false;
+        false
     }
 
     /// Detect suspicious Sync with relaxed rules.
@@ -61,62 +53,24 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
             if let Some(node) = map.find(hir_id);
             if let Node::Item(item) = node;
             if let ItemKind::Impl(Impl {
-                ref generics,
+                generics,
                 of_trait: Some(ref trait_ref),
                 ..
             }) = item.kind;
             if Some(sync_trait_def_id) == trait_ref.trait_def_id();
             then {
                 // If `impl Sync` doesn't involve generic parameters, don't catch it.
-                if generics.params.len() == 0 {
+                if generics.params.is_empty() {
                     return false;
-                }
-
-                // Inspect immediate trait bounds on generic parameters
-                if self.trait_in_imm_relaxed(
-                   &[sync_trait_def_id],
-                   generics.params
-                ) {
-                   return false;
                 }
 
                 return !self.trait_in_where_relaxed(
                     &[sync_trait_def_id],
-                    generics.where_clause.predicates
+                    generics.predicates
                 );
             }
         }
-        return false;
-    }
-
-    fn trait_in_imm_relaxed(
-        &self,
-        target_trait_def_ids: &[DefId],
-        generic_params: &[GenericParam],
-    ) -> bool {
-        for generic_param in generic_params {
-            if let GenericParamKind::Type { .. } = generic_param.kind {
-                for bound in generic_param.bounds {
-                    if let GenericBound::Trait(x, ..) = bound {
-                        if let Some(def_id) = x.trait_ref.trait_def_id() {
-                            if target_trait_def_ids.contains(&def_id) {
-                                return true;
-                            }
-
-                            // Check super-traits
-                            for p in self.rcx.tcx().super_predicates_of(def_id).predicates {
-                                if let PredicateKind::Trait(x) = p.0.kind().skip_binder() {
-                                    if target_trait_def_ids.contains(&x.trait_ref.def_id) {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return false;
+        false
     }
 
     fn trait_in_where_relaxed(
@@ -145,6 +99,6 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                 }
             }
         }
-        return false;
+        false
     }
 }

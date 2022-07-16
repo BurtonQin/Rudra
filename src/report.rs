@@ -88,15 +88,13 @@ impl Report {
         U: Into<Cow<'static, str>>,
     {
         let hir_map = tcx.hir();
-        let item_hir_id = hir_map.local_def_id_to_hir_id(item_hir_id);
-        let span = hir_map.span(item_hir_id);
+        let hir_id = hir_map.local_def_id_to_hir_id(item_hir_id);
+        let span = hir_map.span(hir_id);
 
         let source_map = tcx.sess.source_map();
         let source = if span.from_expansion() {
             // User-Friendly report for macro-generated code
-            rustc_hir_pretty::to_string(hir_map.krate(), |state| {
-                state.print_item(hir_map.expect_item(item_hir_id));
-            })
+            rustc_hir_pretty::id_to_string(&hir_map, hir_id)
         } else {
             source_map
                 .span_to_snippet(span)

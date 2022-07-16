@@ -170,83 +170,79 @@ mod inner {
             let mut taint_analyzer = TaintAnalyzer::new(self.body);
 
             for (id, terminator) in self.body.terminators().enumerate() {
-                match terminator.kind {
-                    ir::TerminatorKind::StaticCall {
-                        callee_did,
-                        callee_substs,
-                        ref args,
-                        ..
-                    } => {
-                        let tcx = self.rcx.tcx();
-                        let ext = tcx.ext();
-                        // Check for lifetime bypass
-                        let symbol_vec = ext.get_def_path(callee_did);
-                        if paths::STRONG_LIFETIME_BYPASS_LIST.contains(&symbol_vec) {
-                            if self.fn_called_on_copy(
-                                (callee_did, args),
-                                &[&PTR_READ[..], &PTR_DIRECT_READ[..]],
-                            ) {
-                                // read on Copy types is not a lifetime bypass.
-                                continue;
-                            }
+                if let ir::TerminatorKind::StaticCall {
+                    callee_did,
+                    callee_substs,
+                    ref args,
+                    ..
+                } = terminator.kind
+                {
+                    let tcx = self.rcx.tcx();
+                    let ext = tcx.ext();
+                    // Check for lifetime bypass
+                    let symbol_vec = ext.get_def_path(callee_did);
+                    if paths::STRONG_LIFETIME_BYPASS_LIST.contains(&symbol_vec) {
+                        if self.fn_called_on_copy(
+                            (callee_did, args),
+                            &[&PTR_READ[..], &PTR_DIRECT_READ[..]],
+                        ) {
+                            // read on Copy types is not a lifetime bypass.
+                            continue;
+                        }
 
-                            if ext.match_def_path(callee_did, &VEC_SET_LEN)
-                                && vec_set_len_to_0(self.rcx, callee_did, args)
-                            {
-                                // Leaking data is safe (`vec.set_len(0);`)
-                                continue;
-                            }
+                        if ext.match_def_path(callee_did, &VEC_SET_LEN)
+                            && vec_set_len_to_0(self.rcx, callee_did, args)
+                        {
+                            // Leaking data is safe (`vec.set_len(0);`)
+                            continue;
+                        }
 
-                            taint_analyzer
-                                .mark_source(id, STRONG_BYPASS_MAP.get(&symbol_vec).unwrap());
-                            self.status
-                                .strong_bypasses
-                                .push(terminator.original.source_info.span);
-                        } else if paths::WEAK_LIFETIME_BYPASS_LIST.contains(&symbol_vec) {
-                            if self.fn_called_on_copy(
-                                (callee_did, args),
-                                &[&PTR_WRITE[..], &PTR_DIRECT_WRITE[..]],
-                            ) {
-                                // writing Copy types is not a lifetime bypass.
-                                continue;
-                            }
+                        taint_analyzer.mark_source(id, STRONG_BYPASS_MAP.get(&symbol_vec).unwrap());
+                        self.status
+                            .strong_bypasses
+                            .push(terminator.original.source_info.span);
+                    } else if paths::WEAK_LIFETIME_BYPASS_LIST.contains(&symbol_vec) {
+                        if self.fn_called_on_copy(
+                            (callee_did, args),
+                            &[&PTR_WRITE[..], &PTR_DIRECT_WRITE[..]],
+                        ) {
+                            // writing Copy types is not a lifetime bypass.
+                            continue;
+                        }
 
-                            taint_analyzer
-                                .mark_source(id, WEAK_BYPASS_MAP.get(&symbol_vec).unwrap());
-                            self.status
-                                .weak_bypasses
-                                .push(terminator.original.source_info.span);
-                        } else if paths::GENERIC_FN_LIST.contains(&symbol_vec) {
-                            taint_analyzer.mark_sink(id);
-                            self.status
-                                .unresolvable_generic_functions
-                                .push(terminator.original.source_info.span);
-                        } else {
-                            // Check for unresolvable generic function calls
-                            match Instance::resolve(
-                                self.rcx.tcx(),
-                                self.param_env,
-                                callee_did,
-                                callee_substs,
-                            ) {
-                                Err(_e) => log_err!(ResolveError),
-                                Ok(Some(_)) => {
-                                    // Calls were successfully resolved
-                                }
-                                Ok(None) => {
-                                    // Call contains unresolvable generic parts
-                                    // Here, we are making a two step approximation:
-                                    // 1. Unresolvable generic code is potentially user-provided
-                                    // 2. User-provided code potentially panics
-                                    taint_analyzer.mark_sink(id);
-                                    self.status
-                                        .unresolvable_generic_functions
-                                        .push(terminator.original.source_info.span);
-                                }
+                        taint_analyzer.mark_source(id, WEAK_BYPASS_MAP.get(&symbol_vec).unwrap());
+                        self.status
+                            .weak_bypasses
+                            .push(terminator.original.source_info.span);
+                    } else if paths::GENERIC_FN_LIST.contains(&symbol_vec) {
+                        taint_analyzer.mark_sink(id);
+                        self.status
+                            .unresolvable_generic_functions
+                            .push(terminator.original.source_info.span);
+                    } else {
+                        // Check for unresolvable generic function calls
+                        match Instance::resolve(
+                            self.rcx.tcx(),
+                            self.param_env,
+                            callee_did,
+                            callee_substs,
+                        ) {
+                            Err(_e) => log_err!(ResolveError),
+                            Ok(Some(_)) => {
+                                // Calls were successfully resolved
+                            }
+                            Ok(None) => {
+                                // Call contains unresolvable generic parts
+                                // Here, we are making a two step approximation:
+                                // 1. Unresolvable generic code is potentially user-provided
+                                // 2. User-provided code potentially panics
+                                taint_analyzer.mark_sink(id);
+                                self.status
+                                    .unresolvable_generic_functions
+                                    .push(terminator.original.source_info.span);
                             }
                         }
                     }
-                    _ => (),
                 }
             }
 
@@ -263,7 +259,9 @@ mod inner {
             let ext = tcx.ext();
             for path in paths.iter() {
                 if ext.match_def_path(callee_did, path) {
-                    for arg in callee_args.iter() {
+                    // No need to inspect beyond first arg of the
+                    // target bypass functions.
+                    if let Some(arg) = callee_args.iter().next() {
                         if_chain! {
                             if let Operand::Move(place) = arg;
                             let place_ty = place.ty(self.body, tcx);
@@ -274,9 +272,6 @@ mod inner {
                                 return true;
                             }
                         }
-                        // No need to inspect beyond first arg of the
-                        // target bypass functions.
-                        break;
                     }
                 }
             }
@@ -284,21 +279,18 @@ mod inner {
         }
     }
 
-    fn trace_calls_in_body<'tcx>(rcx: RudraCtxt<'tcx>, body_def_id: DefId) {
+    fn trace_calls_in_body(rcx: RudraCtxt<'_>, body_def_id: DefId) {
         warn!("Paths discovery function has been detected");
         if let Ok(body) = rcx.translate_body(body_def_id).as_ref() {
             for terminator in body.terminators() {
-                match terminator.kind {
-                    ir::TerminatorKind::StaticCall { callee_did, .. } => {
-                        let ext = rcx.tcx().ext();
-                        println!(
-                            "{}",
-                            ext.get_def_path(callee_did)
-                                .iter()
-                                .fold(String::new(), |a, b| a + " :: " + &*b.as_str())
-                        );
-                    }
-                    _ => (),
+                if let ir::TerminatorKind::StaticCall { callee_did, .. } = terminator.kind {
+                    let ext = rcx.tcx().ext();
+                    println!(
+                        "{}",
+                        ext.get_def_path(callee_did)
+                            .iter()
+                            .fold(String::new(), |a, b| a + " :: " + b.as_str())
+                    );
                 }
             }
         }
@@ -308,7 +300,7 @@ mod inner {
     fn vec_set_len_to_0<'tcx>(
         rcx: RudraCtxt<'tcx>,
         callee_did: DefId,
-        args: &Vec<Operand<'tcx>>,
+        args: &[Operand<'tcx>],
     ) -> bool {
         let tcx = rcx.tcx();
         for arg in args.iter() {

@@ -64,7 +64,7 @@ impl<'tcx> RudraCtxtOwner<'tcx> {
         &self,
     ) -> impl Iterator<Item = (Option<HirId>, (BodyId, Span))> + '_ {
         (&self.related_item_cache)
-            .into_iter()
+            .iter()
             .flat_map(|(&k, v)| v.iter().map(move |&body_id| (k, body_id)))
     }
 
@@ -110,11 +110,7 @@ impl<'tcx> RudraCtxtOwner<'tcx> {
         &self,
         basic_block: &mir::BasicBlockData<'tcx>,
     ) -> TranslationResult<'tcx, ir::BasicBlock<'tcx>> {
-        let statements = basic_block
-            .statements
-            .iter()
-            .map(|statement| statement.clone())
-            .collect::<Vec<_>>();
+        let statements = basic_block.statements.to_vec();
 
         let terminator = self.translate_terminator(
             basic_block
@@ -142,14 +138,12 @@ impl<'tcx> RudraCtxtOwner<'tcx> {
                     func: func_operand,
                     args,
                     destination,
+                    target,
                     cleanup,
                     ..
                 } => {
-                    let cleanup = cleanup.clone().map(|block| block.index());
-                    let destination = destination
-                        .clone()
-                        .map(|(place, block)| (place, block.index()));
-
+                    let cleanup = (*cleanup).map(|block| block.index());
+                    let destination = target.as_ref().map(|target| (*destination, target.index()));
                     if let mir::Operand::Constant(box func) = func_operand {
                         let func_ty = func.literal.ty();
                         match func_ty.kind() {
@@ -163,7 +157,7 @@ impl<'tcx> RudraCtxtOwner<'tcx> {
                                 }
                             }
                             TyKind::FnPtr(_) => ir::TerminatorKind::FnPtr {
-                                value: func.literal.clone(),
+                                value: func.literal,
                             },
                             _ => panic!("invalid callee of type {:?}", func_ty),
                         }
@@ -210,7 +204,7 @@ impl<'tcx> RudraCtxtOwner<'tcx> {
         }
     }
 
-    pub fn index_adt_cache(&self, adt_did: &DefId) -> Option<&Vec<(LocalDefId, Ty)>> {
+    pub fn index_adt_cache(&self, adt_did: &DefId) -> Option<&Vec<(LocalDefId, Ty<'tcx>)>> {
         self.adt_impl_cache.get(adt_did)
     }
 

@@ -12,7 +12,6 @@ extern crate rustc_hir_pretty;
 extern crate rustc_index;
 extern crate rustc_interface;
 extern crate rustc_middle;
-extern crate rustc_mir;
 extern crate rustc_span;
 
 #[macro_use]
@@ -105,13 +104,14 @@ where
     result
 }
 
-pub fn analyze<'tcx>(tcx: TyCtxt<'tcx>, config: RudraConfig) {
+pub fn analyze(tcx: TyCtxt<'_>, config: RudraConfig) {
     // workaround to mimic arena lifetime
     let rcx_owner = RudraCtxtOwner::new(tcx, config.report_level);
     let rcx = &*Box::leak(Box::new(rcx_owner));
 
     // shadow the variable tcx
     #[allow(unused_variables)]
+    #[allow(clippy::let_unit_value)]
     let tcx = ();
 
     // Unsafe destructor analysis

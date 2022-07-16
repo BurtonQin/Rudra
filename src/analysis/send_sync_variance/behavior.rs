@@ -106,8 +106,8 @@ enum FnType {
 /// For each generic parameter (identified by index) of a given ADT,
 /// inspect fn signature & body to identify `AdtBehavior`.
 /// Inspects all `safe` methods of the given ADT, including methods from trait impls.
-pub(crate) fn adt_behavior<'tcx>(
-    rcx: RudraCtxt<'tcx>,
+pub(crate) fn adt_behavior(
+    rcx: RudraCtxt<'_>,
     adt_did: DefId,
 ) -> FxHashMap<PostMapIdx, AdtBehavior> {
     let tcx = rcx.tcx();
@@ -127,7 +127,7 @@ pub(crate) fn adt_behavior<'tcx>(
         // Inspect `impl`s relevant to the given ADT.
         for (impl_hir_id, impl_self_ty) in relevant_impls.iter() {
             if let ty::TyKind::Adt(impl_self_adt_def, impl_substs) = impl_self_ty.kind() {
-                let impl_self_ty_name = tcx.item_name(impl_self_adt_def.did);
+                let impl_self_ty_name = tcx.item_name(impl_self_adt_def.did());
                 if adt_ty_name != impl_self_ty_name {
                     continue;
                 }
@@ -160,7 +160,7 @@ pub(crate) fn adt_behavior<'tcx>(
                                 // so we only check whether the first parameter contains a reference.
                                 // e.g. `&self`, `Box<&self>`, `Pin<&self>`, ..
                                 let mut walker = fn_sig.inputs()[0].walk();
-                                while let Some(node) = walker.next() {
+                                for node in walker.by_ref() {
                                     if let GenericArgKind::Type(ty) = node.unpack() {
                                         if let ty::TyKind::Ref(_, _, Mutability::Not) = ty.kind() {
                                             return Some(FnType::TakeBorrowedSelf(fn_did));
@@ -169,12 +169,12 @@ pub(crate) fn adt_behavior<'tcx>(
                                 }
                             } else {
                                 // Check if the function return type equals `Self`.
-                                if TyS::same_type(fn_sig.output(), adt_ty) {
+                                if fn_sig.output() == adt_ty {
                                     return Some(FnType::ConstructSelf(fn_did));
                                 }
                             }
                         }
-                        return None;
+                        None
                     });
 
                 // Since each `impl` block may assign different indices to equivalent generic parameters,
@@ -191,7 +191,7 @@ pub(crate) fn adt_behavior<'tcx>(
                             let fn_sig = tcx.fn_sig(fn_did).skip_binder();
                             // Check inputs of the constructor
                             for input_ty in fn_sig.inputs() {
-                                for owned_idx in owned_generic_params_in_ty(tcx, input_ty)
+                                for owned_idx in owned_generic_params_in_ty(tcx, *input_ty)
                                     .into_iter()
                                     .map(|idx| {
                                         *fn_ctxt_pseudo_owned_param_idx_map
@@ -279,5 +279,5 @@ pub(crate) fn adt_behavior<'tcx>(
             .insert(AdtBehavior::PASS_OWNED);
     }
 
-    return behavior_map;
+    behavior_map
 }

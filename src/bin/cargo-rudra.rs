@@ -62,10 +62,10 @@ fn get_arg_flag_value(name: &str) -> Option<String> {
         if suffix.is_empty() {
             // This argument is exactly `name`; the next one is the value.
             return args.next();
-        } else if suffix.starts_with('=') {
+        } else if let Some(stripped) = suffix.strip_prefix('=') {
             // This argument is `name=value`; get the value.
             // Strip leading `=`.
-            return Some(suffix[1..].to_owned());
+            return Some(stripped.to_owned());
         }
     }
 }
@@ -93,10 +93,10 @@ where
                 Some(arg) => arg,
                 None => return false,
             }
-        } else if suffix.starts_with('=') {
+        } else if let Some(stripped) = suffix.strip_prefix('=') {
             // This argument is `name=value`; get the value.
             // Strip leading `=`.
-            suffix[1..].to_owned()
+            stripped.to_owned()
         } else {
             return false;
         };
@@ -222,7 +222,7 @@ fn clean_package(package_name: &str) {
         .expect("failed to wait for cargo?");
 
     if !exit_status.success() {
-        show_error(format!("cargo clean failed"));
+        show_error("cargo clean failed");
     }
 }
 
@@ -348,7 +348,7 @@ fn in_cargo_rudra() {
         }
 
         // Forward user-defined `cargo` args until first `--`.
-        while let Some(arg) = args.next() {
+        for arg in args.by_ref() {
             if arg == "--" {
                 break;
             }
@@ -496,7 +496,7 @@ fn inside_cargo_rustc() {
                 format!(
                     "{}-{}",
                     report,
-                    env::var("CARGO_PKG_NAME").unwrap_or(String::from("unknown"))
+                    env::var("CARGO_PKG_NAME").unwrap_or("unknown".to_owned())
                 ),
             );
         }
