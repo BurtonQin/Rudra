@@ -1,5 +1,11 @@
 # Rudra
 
+> **⚠️ This project is archived and no longer maintained.**
+> If you want to replicate the results in the paper, please use the commit version
+> pinned in [Rudra-Artifacts](https://github.com/sslab-gatech/Rudra-artifacts)
+> (`e12e6d3`). The `master` branch here supports a slightly newer version of the
+> Rust compiler, but it does not fully replicate the results in the paper.
+
 Rudra is a static analyzer to detect common undefined behaviors in Rust programs.
 It is capable of analyzing single Rust packages as well as all the packages on
 crates.io.
