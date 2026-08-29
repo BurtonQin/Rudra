@@ -47,7 +47,6 @@ impl<'tcx> UnsafeDataflowChecker<'tcx> {
 
     pub fn analyze(self) {
         let tcx = self.rcx.tcx();
-        let hir_map = tcx.hir();
 
         // Iterates all (type, related function) pairs
         for (_ty_hir_id, (body_id, related_item_span)) in self.rcx.types_with_related_items() {
@@ -79,7 +78,7 @@ impl<'tcx> UnsafeDataflowChecker<'tcx> {
                         AnalysisKind::UnsafeDataflow(behavior_flag),
                         format!(
                             "Potential unsafe dataflow issue in `{}`",
-                            tcx.def_path_str(hir_map.body_owner_def_id(body_id).to_def_id())
+                            tcx.def_path_str(tcx.hir_body_owner_def_id(body_id).to_def_id())
                         ),
                         &color_span,
                     ))
@@ -136,8 +135,7 @@ mod inner {
         }
 
         pub fn analyze_body(rcx: RudraCtxt<'tcx>, body_id: BodyId) -> Option<UnsafeDataflowStatus> {
-            let hir_map = rcx.tcx().hir();
-            let body_did = hir_map.body_owner_def_id(body_id).to_def_id();
+            let body_did = rcx.tcx().hir_body_owner_def_id(body_id).to_def_id();
 
             if rcx.tcx().ext().match_def_path(
                 body_did,
@@ -148,21 +146,21 @@ mod inner {
                 None
             } else if ContainsUnsafe::contains_unsafe(rcx.tcx(), body_id) {
                 match rcx.translate_body(body_did).as_ref() {
+                    Ok(body) => {
+                        let analyzer = UnsafeDataflowBodyAnalyzer::new(
+                            rcx,
+                            rcx.tcx().param_env(body_did),
+                            body,
+                        );
+                        Some(analyzer.analyze())
+                    }
                     Err(e) => {
-                        // MIR is not available for def - log it and continue
                         e.log();
                         None
                     }
-                    Ok(body) => {
-                        let param_env = rcx.tcx().param_env(body_did);
-                        let body_analyzer = UnsafeDataflowBodyAnalyzer::new(rcx, param_env, body);
-                        Some(body_analyzer.analyze())
-                    }
                 }
             } else {
-                // We don't perform interprocedural analysis,
-                // thus safe functions are considered safe
-                Some(Default::default())
+                None
             }
         }
 
@@ -170,30 +168,28 @@ mod inner {
             let mut taint_analyzer = TaintAnalyzer::new(self.body);
 
             for (id, terminator) in self.body.terminators().enumerate() {
-                match terminator.kind {
+                match &terminator.kind {
                     ir::TerminatorKind::StaticCall {
                         callee_did,
                         callee_substs,
-                        ref args,
+                        args,
                         ..
                     } => {
-                        let tcx = self.rcx.tcx();
-                        let ext = tcx.ext();
-                        // Check for lifetime bypass
-                        let symbol_vec = ext.get_def_path(callee_did);
+                        let callee_did = *callee_did;
+                        let symbol_vec = self.rcx.tcx().ext().get_def_path(callee_did);
                         if paths::STRONG_LIFETIME_BYPASS_LIST.contains(&symbol_vec) {
                             if self.fn_called_on_copy(
                                 (callee_did, args),
                                 &[&PTR_READ[..], &PTR_DIRECT_READ[..]],
                             ) {
-                                // read on Copy types is not a lifetime bypass.
+                                // reading Copy types is not a lifetime bypass.
                                 continue;
                             }
 
-                            if ext.match_def_path(callee_did, &VEC_SET_LEN)
+                            if self.rcx.tcx().ext().match_def_path(callee_did, &VEC_SET_LEN)
                                 && vec_set_len_to_0(self.rcx, callee_did, args)
                             {
-                                // Leaking data is safe (`vec.set_len(0);`)
+                                // setting length to 0 is not a lifetime bypass.
                                 continue;
                             }
 
@@ -223,9 +219,9 @@ mod inner {
                                 .push(terminator.original.source_info.span);
                         } else {
                             // Check for unresolvable generic function calls
-                            match Instance::resolve(
+                            match Instance::try_resolve(
                                 self.rcx.tcx(),
-                                self.param_env,
+                                rustc_middle::ty::TypingEnv::fully_monomorphized(),
                                 callee_did,
                                 callee_substs,
                             ) {
@@ -267,9 +263,8 @@ mod inner {
                         if_chain! {
                             if let Operand::Move(place) = arg;
                             let place_ty = place.ty(self.body, tcx);
-                            if let TyKind::RawPtr(ty_and_mut) = place_ty.ty.kind();
-                            let pointed_ty = ty_and_mut.ty;
-                            if pointed_ty.is_copy_modulo_regions(tcx.at(DUMMY_SP), self.param_env);
+                            if let TyKind::RawPtr(pointed_ty, _mutbl) = place_ty.ty.kind();
+                            if tcx.type_is_copy_modulo_regions(rustc_middle::ty::TypingEnv::non_body_analysis(tcx, callee_did), *pointed_ty);
                             then {
                                 return true;
                             }
@@ -307,17 +302,14 @@ mod inner {
     // Check if the argument of `Vec::set_len()` is 0_usize.
     fn vec_set_len_to_0<'tcx>(
         rcx: RudraCtxt<'tcx>,
-        callee_did: DefId,
+        _callee_did: DefId,
         args: &Vec<Operand<'tcx>>,
     ) -> bool {
         let tcx = rcx.tcx();
         for arg in args.iter() {
             if_chain! {
                 if let Operand::Constant(c) = arg;
-                if let Some(c_val) = c.literal.try_eval_usize(
-                    tcx,
-                    tcx.param_env(callee_did),
-                );
+                let c_val = c.const_.eval_target_usize(tcx, rustc_middle::ty::TypingEnv::fully_monomorphized());
                 if c_val == 0;
                 then {
                     // Leaking(`vec.set_len(0);`) is safe.

@@ -1,8 +1,7 @@
-//! Unsafe destructor detector
-use rustc_hir::def_id::DefId;
-use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
+use rustc_hir::def_id::{DefId, LocalDefId};
+use rustc_hir::intravisit::{self, Visitor};
 use rustc_hir::{
-    Block, BodyId, Expr, HirId, Impl, ImplItemId, ImplItemKind, ItemKind, Node, Unsafety,
+    Block, BodyId, Expr, Impl, ImplItemId, ImplItemKind, ItemKind, Safety,
 };
 use rustc_middle::ty::TyCtxt;
 
@@ -54,7 +53,7 @@ impl<'tcx> UnsafeDestructorChecker<'tcx> {
             let tcx = self.rcx.tcx();
             if inner::UnsafeDestructorVisitor::check_drop_unsafety(
                 self.rcx,
-                tcx.hir().local_def_id_to_hir_id(impl_item),
+                impl_item,
                 drop_trait_def_id,
             ) {
                 rudra_report(Report::with_hir_id(
@@ -89,30 +88,27 @@ mod inner {
             }
         }
 
-        /// Given an HIR ID of impl, checks whether `drop()` function contains
-        /// unsafe or not. Returns false if the given HIR ID is invalid.
+        /// Given a LocalDefId of impl, checks whether `drop()` function contains
+        /// unsafe or not. Returns false if the given ID is invalid.
         pub fn check_drop_unsafety(
             rcx: RudraCtxt<'tcx>,
-            hir_id: HirId,
+            impl_def_id: LocalDefId,
             drop_trait_def_id: DefId,
         ) -> bool {
             let mut visitor = UnsafeDestructorVisitor::new(rcx);
 
-            let map = visitor.rcx.tcx().hir();
-            if_chain! {
-                if let Some(node) = map.find(hir_id);
-                if let Node::Item(item) = node;
-                if let ItemKind::Impl(Impl { of_trait: Some(ref trait_ref), items, .. }) = item.kind;
-                if Some(drop_trait_def_id) == trait_ref.trait_def_id();
-                then {
-                    // `Drop` trait has only one required function.
-                    if items.len() == 1 {
-                        let drop_fn_item_ref = &items[0];
-                        let drop_fn_impl_item_id = drop_fn_item_ref.id;
-                        return visitor.check_impl_item(drop_fn_impl_item_id);
+            let tcx = visitor.rcx.tcx();
+            let item = tcx.hir_item(rustc_hir::ItemId { owner_id: rustc_hir::OwnerId { def_id: impl_def_id } });
+            if let ItemKind::Impl(Impl { items, .. }) = item.kind {
+                if let Some(trait_ref) = tcx.impl_opt_trait_ref(impl_def_id.to_def_id()) {
+                    if trait_ref.skip_binder().def_id == drop_trait_def_id {
+                        if items.len() == 1 {
+                            let drop_fn_impl_item_id = items[0];
+                            return visitor.check_impl_item(drop_fn_impl_item_id);
+                        }
+                        log_err!(UnexpectedDropItem);
+                        return false;
                     }
-                    log_err!(UnexpectedDropItem);
-                    return false;
                 }
             }
 
@@ -121,7 +117,7 @@ mod inner {
         }
 
         fn check_impl_item(&mut self, impl_item_id: ImplItemId) -> bool {
-            let impl_item = self.rcx.tcx().hir().impl_item(impl_item_id);
+            let impl_item = self.rcx.tcx().hir_impl_item(impl_item_id);
             if let ImplItemKind::Fn(_sig, body_id) = &impl_item.kind {
                 self.check_body(*body_id)
             } else {
@@ -132,17 +128,17 @@ mod inner {
 
         fn check_body(&mut self, body_id: BodyId) -> bool {
             self.unsafe_found = false;
-            let body = self.rcx.tcx().hir().body(body_id);
+            let body = self.rcx.tcx().hir_body(body_id);
             self.visit_body(body);
             self.unsafe_found
         }
     }
 
     impl<'tcx> Visitor<'tcx> for UnsafeDestructorVisitor<'tcx> {
-        type Map = rustc_middle::hir::map::Map<'tcx>;
+        type NestedFilter = rustc_middle::hir::nested_filter::OnlyBodies;
 
-        fn nested_visit_map(&mut self) -> NestedVisitorMap<Self::Map> {
-            NestedVisitorMap::OnlyBodies(self.rcx.tcx().hir())
+        fn maybe_tcx(&mut self) -> Self::MaybeTyCtxt {
+            self.rcx.tcx()
         }
 
         fn visit_block(&mut self, block: &'tcx Block<'tcx>) {
@@ -164,8 +160,8 @@ mod inner {
             if self.unsafe_nest_level > 0 {
                 // If non-extern unsafe function call is detected in unsafe block
                 if let Some(fn_def_id) = expr.ext().as_fn_def_id(tcx) {
-                    let ty = tcx.type_of(fn_def_id);
-                    if let Ok(Unsafety::Unsafe) = tcx.ext().fn_type_unsafety(ty) {
+                    let ty = tcx.type_of(fn_def_id).instantiate_identity();
+                    if let Ok(Safety::Unsafe) = tcx.ext().fn_type_unsafety(ty) {
                         if !tcx.is_foreign_item(fn_def_id) {
                             self.unsafe_found = true;
                         }

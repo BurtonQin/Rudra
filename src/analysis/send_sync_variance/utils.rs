@@ -2,12 +2,12 @@ use super::*;
 
 // Note that len(adt_generics_iter) == len(substs_generics_iter)
 pub fn generic_param_idx_mapper<'tcx>(
-    adt_generics: &Vec<GenericParamDef>,
-    substs_generics: &'tcx List<subst::GenericArg<'tcx>>,
+    adt_generics: &[GenericParamDef],
+    substs_generics: ty::GenericArgsRef<'tcx>,
 ) -> FxHashMap<PreMapIdx, PostMapIdx> {
     let mut generic_param_idx_mapper = FxHashMap::default();
     for (original, substituted) in adt_generics.iter().zip(substs_generics.iter()) {
-        if let GenericArgKind::Type(ty) = substituted.unpack() {
+        if let Some(ty) = substituted.as_type() {
             // Currently, we focus on the generic parameters that exist in the ADT definition.
 
             // We ignore cases where a generic parameter is replaced with a concrete type.
@@ -16,17 +16,9 @@ pub fn generic_param_idx_mapper<'tcx>(
                 generic_param_idx_mapper
                     .insert(PreMapIdx(param_ty.index), PostMapIdx(original.index));
             }
-            // We also may not take into account
-            // some additional generic parameters introduced in impl/method contexts.
-            /*
-            impl<'a, A: 'a, B: Fn(&'a A)> My<A, B> {
-                // C.index = 3
-                pub fn hello<'b, C>(&self, x: C, y: &'b B) {}
-            }
-            */
         }
     }
-    return generic_param_idx_mapper;
+    generic_param_idx_mapper
 }
 
 const OWNING_ADTS: &[&[&str]] = &[&["core", "option", "Option"], &["core", "result", "Result"]];
@@ -54,19 +46,17 @@ pub fn owned_generic_params_in_ty<'tcx>(
             }
             ty::TyKind::Adt(adt_def, substs) => {
                 if ty.is_box() {
-                    worklist.push(ty.boxed_ty());
+                    if let Some(inner) = ty.boxed_ty() {
+                        worklist.push(inner);
+                    }
                     continue;
                 }
-                // TODO:
-                //   Besides `Box<T>`,
-                //   do we need special handling for types that own T but doesn't have a field `T`?
-                //   ex) Arc<T> or Rc<T> ?
 
                 // Try limiting to cases like Option<T> & Result<T, !> to reduce FP rate.
                 for path in OWNING_ADTS {
-                    if ext.match_def_path(adt_def.did, path) {
-                        for adt_variant in adt_def.variants.iter() {
-                            for adt_field in adt_variant.fields.iter() {
+                    if ext.match_def_path(adt_def.did(), path) {
+                        for adt_variant in adt_def.variants() {
+                            for adt_field in &adt_variant.fields {
                                 let ty = adt_field.ty(tcx, substs);
                                 if let ty::TyKind::Param(_) = ty.kind() {
                                     worklist.push(ty);
@@ -76,11 +66,11 @@ pub fn owned_generic_params_in_ty<'tcx>(
                     }
                 }
             }
-            ty::TyKind::Array(ty, _) => {
-                worklist.push(ty);
+            ty::TyKind::Array(inner_ty, _) => {
+                worklist.push(*inner_ty);
             }
             ty::TyKind::Tuple(substs) => {
-                for ty in substs.types() {
+                for ty in substs.iter() {
                     worklist.push(ty);
                 }
             }
@@ -88,7 +78,7 @@ pub fn owned_generic_params_in_ty<'tcx>(
         }
     }
 
-    owned_generic_params.into_iter().map(|idx| PreMapIdx(idx))
+    owned_generic_params.into_iter().map(PreMapIdx)
 }
 
 // Within the given `ty`,
@@ -114,16 +104,18 @@ pub fn borrowed_generic_params_in_ty<'tcx>(
                 }
             }
             ty::TyKind::Ref(_, borrowed_ty, Mutability::Not) => {
-                worklist.push((borrowed_ty, true));
+                worklist.push((*borrowed_ty, true));
             }
             ty::TyKind::Adt(adt_def, substs) => {
                 if ty.is_box() {
-                    worklist.push((ty.boxed_ty(), borrowed));
+                    if let Some(inner) = ty.boxed_ty() {
+                        worklist.push((inner, borrowed));
+                    }
                     continue;
                 }
 
-                for adt_variant in adt_def.variants.iter() {
-                    for adt_field in adt_variant.fields.iter() {
+                for adt_variant in adt_def.variants() {
+                    for adt_field in &adt_variant.fields {
                         let adt_field_ty = adt_field.ty(tcx, substs);
                         // We peel off just one level of ADT layer when trying to find exposed `&T`.
                         // This helps to limit complexity & rule out Mutex-like FPs.
@@ -134,11 +126,11 @@ pub fn borrowed_generic_params_in_ty<'tcx>(
                     }
                 }
             }
-            ty::TyKind::Array(ty, _) => {
-                worklist.push((ty, borrowed));
+            ty::TyKind::Array(inner_ty, _) => {
+                worklist.push((*inner_ty, borrowed));
             }
             ty::TyKind::Tuple(substs) => {
-                for ty in substs.types() {
+                for ty in substs.iter() {
                     worklist.push((ty, borrowed));
                 }
             }
@@ -148,10 +140,10 @@ pub fn borrowed_generic_params_in_ty<'tcx>(
 
     borrowed_generic_params
         .into_iter()
-        .map(|idx| PreMapIdx(idx))
+        .map(PreMapIdx)
 }
 
-const PSEUDO_OWNED: [&'static str; 4] = [
+const PSEUDO_OWNED: [&str; 4] = [
     "std::convert::Into",
     "core::convert::Into",
     "std::iter::IntoIterator",
@@ -170,16 +162,10 @@ pub fn find_pseudo_owned_in_fn_ctxt<'tcx>(
     fn_did: DefId,
 ) -> FxHashMap<PreMapIdx, PreMapIdx> {
     let mut fn_ctxt_pseudo_owned_param_idx_map = FxHashMap::default();
-    for atom in tcx
-        .param_env(fn_did)
-        .caller_bounds()
-        .iter()
-        .map(|x| x.kind().skip_binder())
-    {
-        if let PredicateKind::Trait(trait_predicate) = atom {
+    for clause in tcx.param_env(fn_did).caller_bounds() {
+        if let ty::ClauseKind::Trait(trait_predicate) = clause.kind().skip_binder() {
             if let ty::TyKind::Param(param_ty) = trait_predicate.self_ty().kind() {
-                let substs = trait_predicate.trait_ref.substs;
-                let substs_types = substs.types().collect::<Vec<_>>();
+                let substs_types = trait_predicate.trait_ref.args.types().collect::<Vec<_>>();
 
                 // trait_predicate =>  M: Into<P>
                 //                     |    |

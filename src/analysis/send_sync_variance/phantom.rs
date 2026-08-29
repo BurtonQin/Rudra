@@ -9,18 +9,18 @@ pub fn phantom_indices<'tcx>(tcx: TyCtxt<'tcx>, adt_ty: Ty<'tcx>) -> Vec<u32> {
     let (mut in_phantom, mut out_phantom) = (FxHashSet::default(), FxHashSet::default());
 
     if let ty::TyKind::Adt(adt_def, substs) = adt_ty.kind() {
-        for variant in &adt_def.variants {
+        for variant in adt_def.variants() {
             for field in &variant.fields {
                 let field_ty = field.ty(tcx, substs);
 
-                let mut walker = field_ty.walk(tcx);
+                let mut walker = field_ty.walk();
                 while let Some(node) = walker.next() {
-                    if let GenericArgKind::Type(inner_ty) = node.unpack() {
+                    if let Some(inner_ty) = node.as_type() {
                         if inner_ty.is_phantom_data() {
                             walker.skip_current_subtree();
 
-                            for x in inner_ty.walk(tcx) {
-                                if let GenericArgKind::Type(ph_ty) = x.unpack() {
+                            for x in inner_ty.walk() {
+                                if let Some(ph_ty) = x.as_type() {
                                     if let ty::TyKind::Param(ty) = ph_ty.kind() {
                                         in_phantom.insert(ty.index);
                                     }
@@ -44,5 +44,5 @@ pub fn phantom_indices<'tcx>(tcx: TyCtxt<'tcx>, adt_ty: Ty<'tcx>) -> Vec<u32> {
         .filter(|e| !out_phantom.contains(e))
         .collect();
 
-    return in_phantom;
+    in_phantom
 }

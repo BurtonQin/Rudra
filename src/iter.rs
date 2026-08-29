@@ -15,11 +15,18 @@ pub struct LocalTraitIter {
 
 impl LocalTraitIter {
     pub fn new<'tcx>(rcx: RudraCtxt<'tcx>, trait_def_id: DefId) -> Self {
-        let local_trait_impl_map = rcx.tcx().all_local_trait_impls(());
-        let impl_id_vec = local_trait_impl_map
-            .get(&trait_def_id)
-            .map(Clone::clone)
-            .unwrap_or(Vec::new());
+        let mut impl_id_vec = Vec::new();
+        let tcx = rcx.tcx();
+        for item_id in tcx.hir_crate_items(()).free_items() {
+            let item = tcx.hir_item(item_id);
+            if let rustc_hir::ItemKind::Impl(..) = item.kind {
+                if let Some(trait_ref) = tcx.impl_opt_trait_ref(item.owner_id.def_id.to_def_id()) {
+                    if trait_ref.skip_binder().def_id == trait_def_id {
+                        impl_id_vec.push(item.owner_id.def_id);
+                    }
+                }
+            }
+        }
         LocalTraitIter {
             inner: impl_id_vec.into_iter(),
         }

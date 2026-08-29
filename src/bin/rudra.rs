@@ -1,9 +1,10 @@
-#![feature(backtrace)]
 #![feature(rustc_private)]
 
 extern crate rustc_driver;
 extern crate rustc_errors;
 extern crate rustc_interface;
+extern crate rustc_middle;
+extern crate rustc_session;
 
 #[macro_use]
 extern crate log;
@@ -11,7 +12,8 @@ extern crate log;
 use std::env;
 
 use rustc_driver::Compilation;
-use rustc_interface::{interface::Compiler, Queries};
+use rustc_interface::interface::Compiler;
+use rustc_middle::ty::TyCtxt;
 
 use rudra::log::Verbosity;
 use rudra::report::{default_report_logger, init_report_logger, ReportLevel};
@@ -31,25 +33,17 @@ impl rustc_driver::Callbacks for RudraCompilerCalls {
     fn after_analysis<'tcx>(
         &mut self,
         compiler: &Compiler,
-        queries: &'tcx Queries<'tcx>,
+        tcx: TyCtxt<'tcx>,
     ) -> Compilation {
-        compiler.session().abort_if_errors();
+        compiler.sess.dcx().abort_if_errors();
 
         rudra::log::setup_logging(self.config.verbosity).expect("Rudra failed to initialize");
 
-        debug!(
-            "Input file name: {}",
-            compiler.input().source_name().prefer_local()
-        );
-        debug!("Crate name: {}", queries.crate_name().unwrap().peek_mut());
-
         progress_info!("Rudra started");
-        queries.global_ctxt().unwrap().peek_mut().enter(|tcx| {
-            analyze(tcx, self.config);
-        });
+        analyze(tcx, self.config);
         progress_info!("Rudra finished");
 
-        compiler.session().abort_if_errors();
+        compiler.sess.dcx().abort_if_errors();
         Compilation::Stop
     }
 }
@@ -58,7 +52,7 @@ impl rustc_driver::Callbacks for RudraCompilerCalls {
 fn run_compiler(
     mut args: Vec<String>,
     callbacks: &mut (dyn rustc_driver::Callbacks + Send),
-) -> i32 {
+) -> std::process::ExitCode {
     // Make sure we use the right default sysroot. The default sysroot is wrong,
     // because `get_or_default_sysroot` in `librustc_session` bases that on `current_exe`.
     //
@@ -82,11 +76,9 @@ fn run_compiler(
     );
 
     // Invoke compiler, and handle return code.
-    let exit_code = rustc_driver::catch_with_exit_code(move || {
-        rustc_driver::RunCompiler::new(&args, callbacks).run()
-    });
-
-    exit_code
+    rustc_driver::catch_with_exit_code(move || {
+        rustc_driver::run_compiler(&args, callbacks);
+    })
 }
 
 fn parse_config() -> (RudraConfig, Vec<String>) {
@@ -120,35 +112,29 @@ fn parse_config() -> (RudraConfig, Vec<String>) {
     (config, rustc_args)
 }
 
-fn main() {
-    rustc_driver::install_ice_hook(); // ICE: Internal Compilation Error
+fn main() -> std::process::ExitCode {
+    rustc_driver::install_ice_hook("https://github.com/sslab-gatech/Rudra/issues", |_| {});
 
-    let exit_code = {
-        // initialize the report logger
-        // `logger_handle` must be nested because it flushes the logs when it goes out of the scope
-        let (config, mut rustc_args) = parse_config();
-        let _logger_handle = init_report_logger(default_report_logger());
+    let (config, mut rustc_args) = parse_config();
+    let _logger_handle = init_report_logger(default_report_logger());
 
-        // init rustc logger
-        if env::var_os("RUSTC_LOG").is_some() {
-            rustc_driver::init_rustc_env_logger();
+    // init rustc logger
+    if env::var_os("RUSTC_LOG").is_some() {
+        rustc_driver::init_rustc_env_logger(&rustc_session::EarlyDiagCtxt::new(rustc_session::config::ErrorOutputType::default()));
+    }
+
+    if let Some(sysroot) = compile_time_sysroot() {
+        let sysroot_flag = "--sysroot";
+        if !rustc_args.iter().any(|e| e == sysroot_flag) {
+            // We need to overwrite the default that librustc would compute.
+            rustc_args.push(sysroot_flag.to_owned());
+            rustc_args.push(sysroot);
         }
+    }
 
-        if let Some(sysroot) = compile_time_sysroot() {
-            let sysroot_flag = "--sysroot";
-            if !rustc_args.iter().any(|e| e == sysroot_flag) {
-                // We need to overwrite the default that librustc would compute.
-                rustc_args.push(sysroot_flag.to_owned());
-                rustc_args.push(sysroot);
-            }
-        }
+    // Finally, add the default flags all the way in the beginning, but after the binary name.
+    rustc_args.splice(1..1, RUDRA_DEFAULT_ARGS.iter().map(ToString::to_string));
 
-        // Finally, add the default flags all the way in the beginning, but after the binary name.
-        rustc_args.splice(1..1, RUDRA_DEFAULT_ARGS.iter().map(ToString::to_string));
-
-        debug!("rustc arguments: {:?}", &rustc_args);
-        run_compiler(rustc_args, &mut RudraCompilerCalls::new(config))
-    };
-
-    std::process::exit(exit_code)
+    debug!("rustc arguments: {:?}", &rustc_args);
+    run_compiler(rustc_args, &mut RudraCompilerCalls::new(config))
 }

@@ -93,7 +93,7 @@ impl<'tcx> RudraCtxtOwner<'tcx> {
             .collect::<Vec<_>>();
 
         let basic_blocks: Vec<_> = body
-            .basic_blocks()
+            .basic_blocks
             .iter()
             .map(|basic_block| self.translate_basic_block(basic_block))
             .collect::<Result<Vec<_>, _>>()?;
@@ -142,28 +142,31 @@ impl<'tcx> RudraCtxtOwner<'tcx> {
                     func: func_operand,
                     args,
                     destination,
-                    cleanup,
+                    target,
+                    unwind,
                     ..
                 } => {
-                    let cleanup = cleanup.clone().map(|block| block.index());
-                    let destination = destination
-                        .clone()
-                        .map(|(place, block)| (place, block.index()));
+                    let cleanup = match unwind {
+                        mir::UnwindAction::Cleanup(block) => Some(block.index()),
+                        _ => None,
+                    };
+                    let dest = Some((*destination, target.map(|b| b.index()).unwrap_or(0)));
+                    let operands = args.iter().map(|a| a.node.clone()).collect::<Vec<_>>();
 
                     if let mir::Operand::Constant(box func) = func_operand {
-                        let func_ty = func.literal.ty();
+                        let func_ty = func.ty();
                         match func_ty.kind() {
                             TyKind::FnDef(def_id, callee_substs) => {
                                 ir::TerminatorKind::StaticCall {
                                     callee_did: *def_id,
-                                    callee_substs,
-                                    args: args.clone(),
+                                    callee_substs: *callee_substs,
+                                    args: operands,
                                     cleanup,
-                                    destination,
+                                    destination: dest,
                                 }
                             }
-                            TyKind::FnPtr(_) => ir::TerminatorKind::FnPtr {
-                                value: func.literal.clone(),
+                            TyKind::FnPtr(..) => ir::TerminatorKind::FnPtr {
+                                value: func.const_,
                             },
                             _ => panic!("invalid callee of type {:?}", func_ty),
                         }
@@ -171,8 +174,7 @@ impl<'tcx> RudraCtxtOwner<'tcx> {
                         ir::TerminatorKind::Unimplemented("non-constant function call".into())
                     }
                 }
-                TerminatorKind::Drop { .. } | TerminatorKind::DropAndReplace { .. } => {
-                    // TODO: implement Drop and DropAndReplace terminators
+                TerminatorKind::Drop { .. } => {
                     ir::TerminatorKind::Unimplemented(
                         format!("TODO terminator: {:?}", terminator).into(),
                     )
@@ -194,12 +196,7 @@ impl<'tcx> RudraCtxtOwner<'tcx> {
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
     ) -> Result<&'tcx mir::Body<'tcx>, MirInstantiationError> {
-        if tcx.is_mir_available(def_id)
-            && matches!(
-                tcx.hir().body_const_context(def_id.expect_local()),
-                None | Some(ConstContext::ConstFn)
-            )
-        {
+        if tcx.is_mir_available(def_id) {
             Ok(tcx.optimized_mir(def_id))
         } else {
             debug!(
@@ -210,7 +207,7 @@ impl<'tcx> RudraCtxtOwner<'tcx> {
         }
     }
 
-    pub fn index_adt_cache(&self, adt_did: &DefId) -> Option<&Vec<(LocalDefId, Ty)>> {
+    pub fn index_adt_cache(&self, adt_did: &DefId) -> Option<&Vec<(LocalDefId, Ty<'tcx>)>> {
         self.adt_impl_cache.get(adt_did)
     }
 

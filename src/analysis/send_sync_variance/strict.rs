@@ -14,10 +14,11 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
     ) -> Option<(DefId, BehaviorFlag)> {
         let rcx = self.rcx;
         let tcx = rcx.tcx();
-        if let Some(trait_ref) = tcx.impl_trait_ref(impl_id) {
+        if let Some(trait_ref) = tcx.impl_opt_trait_ref(impl_id.to_def_id()) {
+            let trait_ref = trait_ref.skip_binder();
             if let ty::TyKind::Adt(adt_def, impl_trait_substs) = trait_ref.self_ty().kind() {
-                let adt_did = adt_def.did;
-                let adt_ty = tcx.type_of(adt_did);
+                let adt_did = adt_def.did();
+                let adt_ty = tcx.type_of(adt_did).instantiate_identity();
 
                 let mut need_send_sync: FxHashMap<PostMapIdx, BehaviorFlag> = FxHashMap::default();
 
@@ -35,7 +36,7 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
 
                 // Initialize sets `need_send` & `need_sync`.
                 if adt_def.is_struct() {
-                    for gen_param in tcx.generics_of(adt_did).params.iter() {
+                    for gen_param in &tcx.generics_of(adt_did).own_params {
                         if let GenericParamDefKind::Type { .. } = gen_param.kind {
                             let post_map_idx = PostMapIdx(gen_param.index);
                             let mut analyses = BehaviorFlag::NAIVE_SYNC_FOR_SYNC;
@@ -62,7 +63,7 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                 } else {
                     // Fields of enums/unions can be accessed by pattern matching.
                     // In this case, we require all generic parameters to be `Sync`.
-                    for gen_param in tcx.generics_of(adt_did).params.iter() {
+                    for gen_param in &tcx.generics_of(adt_did).own_params {
                         if let GenericParamDefKind::Type { .. } = gen_param.kind {
                             let post_map_idx = PostMapIdx(gen_param.index);
                             let mut analyses = BehaviorFlag::NAIVE_SYNC_FOR_SYNC;
@@ -85,25 +86,18 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                     }
                 }
 
-                // If the below assertion fails, there must be an issue with librustc we're using.
-                // assert_eq!(tcx.generics_of(adt_did).params.len(), substs.len());
                 let generic_param_idx_map =
-                    generic_param_idx_mapper(&tcx.generics_of(adt_did).params, impl_trait_substs);
+                    generic_param_idx_mapper(&tcx.generics_of(adt_did).own_params, *impl_trait_substs);
 
                 // Iterate over predicates to check trait bounds on generic params.
-                for atom in tcx
-                    .param_env(impl_id)
-                    .caller_bounds()
-                    .iter()
-                    .map(|x| x.kind().skip_binder())
-                {
-                    if let PredicateKind::Trait(trait_predicate) = atom {
+                for clause in tcx.param_env(impl_id.to_def_id()).caller_bounds() {
+                    if let ty::ClauseKind::Trait(trait_predicate) = clause.kind().skip_binder() {
                         if let ty::TyKind::Param(param_ty) = trait_predicate.self_ty().kind() {
                             let pre_map_idx = PreMapIdx(param_ty.index);
                             if let Some(mapped_idx) = generic_param_idx_map.get(&pre_map_idx) {
                                 let trait_did = trait_predicate.def_id();
                                 if trait_did == sync_trait_def_id {
-                                    if let Some(analyses) = need_send_sync.get_mut(&mapped_idx) {
+                                    if let Some(analyses) = need_send_sync.get_mut(mapped_idx) {
                                         analyses.remove(BehaviorFlag::API_SYNC_FOR_SYNC);
                                         analyses.remove(BehaviorFlag::NAIVE_SYNC_FOR_SYNC);
                                     }
@@ -113,7 +107,7 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                                 } else if (trait_did == send_trait_def_id)
                                     || (trait_did == copy_trait_def_id)
                                 {
-                                    if let Some(analyses) = need_send_sync.get_mut(&mapped_idx) {
+                                    if let Some(analyses) = need_send_sync.get_mut(mapped_idx) {
                                         analyses.remove(BehaviorFlag::API_SEND_FOR_SYNC);
                                     }
                                 }
@@ -137,7 +131,7 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                 };
             }
         }
-        return None;
+        None
     }
 
     /// Returns `Some(DefId of ADT)` if `impl Send` for the ADT looks suspicious
@@ -150,13 +144,11 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
         copy_trait_def_id: DefId,
     ) -> Option<(DefId, BehaviorFlag)> {
         let tcx = self.rcx.tcx();
-        if let Some(trait_ref) = tcx.impl_trait_ref(impl_id) {
+        if let Some(trait_ref) = tcx.impl_opt_trait_ref(impl_id.to_def_id()) {
+            let trait_ref = trait_ref.skip_binder();
             if let ty::TyKind::Adt(adt_def, impl_trait_substs) = trait_ref.self_ty().kind() {
-                let adt_did = adt_def.did;
-                let adt_ty = tcx.type_of(adt_did);
-
-                // Keep track of generic params that need to be `Send`.
-                // let mut need_send: FxHashSet<PostMapIdx> = FxHashSet::default();
+                let adt_did = adt_def.did();
+                let adt_ty = tcx.type_of(adt_did).instantiate_identity();
 
                 let mut need_send_sync: FxHashMap<PostMapIdx, BehaviorFlag> = FxHashMap::default();
 
@@ -166,13 +158,11 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                     .entry(adt_did)
                     .or_insert_with(|| phantom_indices(tcx, adt_ty));
 
-                // If the below assertion fails, there must be an issue with librustc we're using.
-                // assert_eq!(tcx.generics_of(adt_did).params.len(), substs.len());
                 let generic_param_idx_map =
-                    generic_param_idx_mapper(&tcx.generics_of(adt_did).params, impl_trait_substs);
+                    generic_param_idx_mapper(&tcx.generics_of(adt_did).own_params, *impl_trait_substs);
 
                 // Initialize set `need_send`
-                for gen_param in tcx.generics_of(adt_did).params.iter() {
+                for gen_param in &tcx.generics_of(adt_did).own_params {
                     if let GenericParamDefKind::Type { .. } = gen_param.kind {
                         let post_map_idx = PostMapIdx(gen_param.index);
                         let mut analyses = BehaviorFlag::NAIVE_SEND_FOR_SEND;
@@ -189,30 +179,9 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                     }
                 }
 
-                /* Our current filtering policy for `impl Send`:
-                    1. Allow `T: Send` for `impl Send`
-                    2. Allow `T: Sync` for `impl Send`
-                        There are rare counterexamples (`!Send + Sync`) like `MutexGuard<_>`,
-                        but we assume that in most of the common cases this holds true.
-                    3. Allow `T: Copy` for `impl Send`
-                        We shouldn't unconditionally allow `T: Copy for impl Send`,
-                        due to the following edge case:
-                        ```
-                            // Below example be problematic for cases where T: !Sync .
-                            struct Atom1<'a, T>(&'a T);
-                            unsafe impl<'a, T: Copy> Send for Atom1<'a, T> {}
-                        ```
-                        TODO: implement additional checking to catch above edge case.
-                */
-
                 // Iterate over predicates to check trait bounds on generic params.
-                for atom in tcx
-                    .param_env(impl_id)
-                    .caller_bounds()
-                    .iter()
-                    .map(|x| x.kind().skip_binder())
-                {
-                    if let PredicateKind::Trait(trait_predicate) = atom {
+                for clause in tcx.param_env(impl_id.to_def_id()).caller_bounds() {
+                    if let ty::ClauseKind::Trait(trait_predicate) = clause.kind().skip_binder() {
                         if let ty::TyKind::Param(param_ty) = trait_predicate.self_ty().kind() {
                             let pre_map_idx = PreMapIdx(param_ty.index);
                             if let Some(mapped_idx) = generic_param_idx_map.get(&pre_map_idx) {
@@ -221,7 +190,7 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                                     || trait_did == sync_trait_def_id
                                     || trait_did == copy_trait_def_id
                                 {
-                                    need_send_sync.remove(&mapped_idx);
+                                    need_send_sync.remove(mapped_idx);
                                     for analyses in need_send_sync.values_mut() {
                                         analyses.remove(BehaviorFlag::RELAX_SEND);
                                     }
@@ -246,6 +215,6 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
                 };
             }
         }
-        return None;
+        None
     }
 }

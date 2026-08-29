@@ -10,21 +10,16 @@ mod utils;
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
-use rustc_hir::{
-    GenericBound, GenericParam, GenericParamKind, HirId, Impl, ImplPolarity, ItemId, ItemKind,
-    Node, WherePredicate,
-};
-use rustc_middle::mir::terminator::Mutability;
+use rustc_hir::{GenericBound, GenericParamKind, HirId, Impl, ItemKind, Mutability, WherePredicate};
 use rustc_middle::ty::{
-    self,
-    subst::{self, GenericArgKind},
-    AssocKind, GenericParamDef, GenericParamDefKind, List, PredicateKind, Ty, TyCtxt, TyS,
+    self, AssocKind, GenericParamDef, GenericParamDefKind, Ty, TyCtxt,
 };
 use rustc_span::symbol::sym;
 
 use snafu::{OptionExt, Snafu};
 
 use crate::analysis::{AnalysisKind, IntoReportLevel};
+use crate::iter::LocalTraitIter;
 use crate::prelude::*;
 use crate::report::{Report, ReportLevel};
 
@@ -55,17 +50,30 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
     }
 
     pub fn analyze(mut self) {
-        let send_trait_did = unwrap_or!(send_trait_def_id(self.rcx.tcx()) => return);
-        let sync_trait_did = unwrap_or!(sync_trait_def_id(self.rcx.tcx()) => return);
-        let copy_trait_did = unwrap_or!(copy_trait_def_id(self.rcx.tcx()) => return);
+        fn lang_item<'tcx>(tcx: TyCtxt<'tcx>, name: rustc_span::Symbol) -> Option<DefId> {
+            tcx.get_diagnostic_item(name)
+        }
+
+        let send_trait_did = match lang_item(self.rcx.tcx(), sym::Send) {
+            Some(did) => did,
+            None => return,
+        };
+        let sync_trait_did = match lang_item(self.rcx.tcx(), sym::Sync) {
+            Some(did) => did,
+            None => return,
+        };
+        let copy_trait_did = match lang_item(self.rcx.tcx(), sym::Copy) {
+            Some(did) => did,
+            None => return,
+        };
 
         // Main analysis
         self.analyze_send(send_trait_did, sync_trait_did, copy_trait_did);
         self.analyze_sync(send_trait_did, sync_trait_did, copy_trait_did);
 
         // Report any suspicious `Send`/`Sync` impls on the given struct.
-        for (_struct_def_id, reports) in self.report_map.into_iter() {
-            for report in reports.into_iter() {
+        for (_adt_did, reports) in self.report_map {
+            for report in reports {
                 rudra_report(report);
             }
         }
@@ -78,18 +86,16 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
         sync_trait_did: DefId,
         copy_trait_did: DefId,
     ) {
-        // Iterate over `impl`s that implement `Send`.
-        let hir = self.rcx.tcx().hir();
-        for &impl_id in hir.trait_impls(send_trait_did) {
-            let item = hir.item(ItemId { def_id: impl_id });
+        let tcx = self.rcx.tcx();
+        for impl_id in LocalTraitIter::new(self.rcx, send_trait_did) {
+            let item = tcx.hir_item(rustc_hir::ItemId { owner_id: rustc_hir::OwnerId { def_id: impl_id } });
             if_chain! {
-                if let ItemKind::Impl(impl_item) = &item.kind;
-                if impl_item.polarity == ImplPolarity::Positive;
+                if let ItemKind::Impl(_impl_item) = &item.kind;
+                if tcx.impl_polarity(impl_id.to_def_id()) == ty::ImplPolarity::Positive;
                 if let Some((adt_def_id, send_sync_analyses)) =
                     self.suspicious_send(impl_id, send_trait_did, sync_trait_did, copy_trait_did);
                 if send_sync_analyses.report_level() >= self.rcx.report_level();
                 then {
-                    let tcx = self.rcx.tcx();
                     self.report_map
                         .entry(adt_def_id)
                         .or_insert_with(|| Vec::with_capacity(2))
@@ -113,18 +119,16 @@ impl<'tcx> SendSyncVarianceChecker<'tcx> {
         sync_trait_did: DefId,
         copy_trait_did: DefId,
     ) {
-        // Iterate over `impl`s that implement `Sync`.
-        let hir = self.rcx.tcx().hir();
-        for &impl_id in hir.trait_impls(sync_trait_did) {
-            let item = hir.item(ItemId { def_id: impl_id });
+        let tcx = self.rcx.tcx();
+        for impl_id in LocalTraitIter::new(self.rcx, sync_trait_did) {
+            let item = tcx.hir_item(rustc_hir::ItemId { owner_id: rustc_hir::OwnerId { def_id: impl_id } });
             if_chain! {
-                if let ItemKind::Impl(impl_item) = &item.kind;
-                if impl_item.polarity == ImplPolarity::Positive;
+                if let ItemKind::Impl(_impl_item) = &item.kind;
+                if tcx.impl_polarity(impl_id.to_def_id()) == ty::ImplPolarity::Positive;
                 if let Some((struct_def_id, send_sync_analyses)) =
                     self.suspicious_sync(impl_id, send_trait_did, sync_trait_did, copy_trait_did);
                 if send_sync_analyses.report_level() >= self.rcx.report_level();
                 then {
-                    let tcx = self.rcx.tcx();
                     self.report_map
                         .entry(struct_def_id)
                         .or_insert_with(|| Vec::with_capacity(2))
