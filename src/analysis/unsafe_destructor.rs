@@ -145,12 +145,13 @@ mod inner {
             use rustc_hir::BlockCheckMode;
             match block.rules {
                 BlockCheckMode::DefaultBlock => (),
-                BlockCheckMode::UnsafeBlock(_unsafe_source) => {
+                BlockCheckMode::UnsafeBlock(rustc_hir::UnsafeSource::UserProvided) => {
                     self.unsafe_nest_level += 1;
                     intravisit::walk_block(self, block);
                     self.unsafe_nest_level -= 1;
                     return;
                 }
+                BlockCheckMode::UnsafeBlock(rustc_hir::UnsafeSource::CompilerGenerated) => (),
             }
             intravisit::walk_block(self, block);
         }

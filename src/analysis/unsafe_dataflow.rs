@@ -1,5 +1,5 @@
 use rustc_hir::{def_id::DefId, BodyId};
-use rustc_middle::mir::Operand;
+use rustc_middle::mir::{self, Operand};
 use rustc_middle::ty::{Instance, ParamEnv, TyKind};
 use rustc_span::{Span, DUMMY_SP};
 
@@ -167,6 +167,17 @@ mod inner {
         fn analyze(mut self) -> UnsafeDataflowStatus {
             let mut taint_analyzer = TaintAnalyzer::new(self.body);
 
+            for (bb_idx, block) in self.body.basic_blocks.iter().enumerate() {
+                for statement in &block.statements {
+                    if let mir::StatementKind::Assign(box (_place, mir::Rvalue::Cast(mir::CastKind::Transmute, _op, ty))) = &statement.kind {
+                        if !ty.is_integral() {
+                            taint_analyzer.mark_source(bb_idx, &BehaviorFlag::TRANSMUTE);
+                            self.status.weak_bypasses.push(statement.source_info.span);
+                        }
+                    }
+                }
+            }
+
             for (id, terminator) in self.body.terminators().enumerate() {
                 match &terminator.kind {
                     ir::TerminatorKind::StaticCall {
@@ -180,13 +191,14 @@ mod inner {
                         if paths::STRONG_LIFETIME_BYPASS_LIST.contains(&symbol_vec) {
                             if self.fn_called_on_copy(
                                 (callee_did, args),
-                                &[&PTR_READ[..], &PTR_DIRECT_READ[..]],
+                                &[&PTR_READ[..], &PTR_DIRECT_READ[..], &PTR_DIRECT_READ_SIMPLIFIED[..]],
                             ) {
                                 // reading Copy types is not a lifetime bypass.
                                 continue;
                             }
 
-                            if self.rcx.tcx().ext().match_def_path(callee_did, &VEC_SET_LEN)
+                            if (self.rcx.tcx().ext().match_def_path(callee_did, &VEC_SET_LEN)
+                                || self.rcx.tcx().ext().match_def_path(callee_did, &VEC_SET_LEN_ORIGINAL))
                                 && vec_set_len_to_0(self.rcx, callee_did, args)
                             {
                                 // setting length to 0 is not a lifetime bypass.
@@ -201,7 +213,7 @@ mod inner {
                         } else if paths::WEAK_LIFETIME_BYPASS_LIST.contains(&symbol_vec) {
                             if self.fn_called_on_copy(
                                 (callee_did, args),
-                                &[&PTR_WRITE[..], &PTR_DIRECT_WRITE[..]],
+                                &[&PTR_WRITE[..], &PTR_DIRECT_WRITE[..], &PTR_DIRECT_WRITE_SIMPLIFIED[..]],
                             ) {
                                 // writing Copy types is not a lifetime bypass.
                                 continue;
@@ -221,7 +233,10 @@ mod inner {
                             // Check for unresolvable generic function calls
                             match Instance::try_resolve(
                                 self.rcx.tcx(),
-                                rustc_middle::ty::TypingEnv::fully_monomorphized(),
+                                rustc_middle::ty::TypingEnv {
+                                    typing_mode: rustc_middle::ty::TypingMode::non_body_analysis(),
+                                    param_env: self.param_env,
+                                },
                                 callee_did,
                                 callee_substs,
                             ) {
@@ -264,7 +279,7 @@ mod inner {
                             if let Operand::Move(place) = arg;
                             let place_ty = place.ty(self.body, tcx);
                             if let TyKind::RawPtr(pointed_ty, _mutbl) = place_ty.ty.kind();
-                            if tcx.type_is_copy_modulo_regions(rustc_middle::ty::TypingEnv::non_body_analysis(tcx, callee_did), *pointed_ty);
+                            if tcx.type_is_copy_modulo_regions(rustc_middle::ty::TypingEnv { typing_mode: rustc_middle::ty::TypingMode::non_body_analysis(), param_env: self.param_env }, *pointed_ty);
                             then {
                                 return true;
                             }

@@ -20,26 +20,36 @@ to
 // Strong bypasses
 pub const PTR_READ: [&str; 3] = ["core", "ptr", "read"];
 pub const PTR_DIRECT_READ: [&str; 5] = ["core", "ptr", "const_ptr", "<impl *const T>", "read"];
+pub const PTR_DIRECT_READ_SIMPLIFIED: [&str; 4] = ["core", "ptr", "const_ptr", "read"];
 
 pub const INTRINSICS_COPY: [&str; 3] = ["core", "intrinsics", "copy"];
 pub const INTRINSICS_COPY_NONOVERLAPPING: [&str; 3] = ["core", "intrinsics", "copy_nonoverlapping"];
 
-pub const VEC_SET_LEN: [&str; 4] = ["alloc", "vec", "Vec", "set_len"];
-pub const VEC_FROM_RAW_PARTS: [&str; 4] = ["alloc", "vec", "Vec", "from_raw_parts"];
+pub const VEC_SET_LEN: [&str; 3] = ["alloc", "vec", "set_len"];
+pub const VEC_SET_LEN_ORIGINAL: [&str; 4] = ["alloc", "vec", "Vec", "set_len"];
+pub const VEC_FROM_RAW_PARTS: [&str; 3] = ["alloc", "vec", "from_raw_parts"];
+pub const VEC_FROM_RAW_PARTS_ORIGINAL: [&str; 4] = ["alloc", "vec", "Vec", "from_raw_parts"];
 
 // Weak bypasses
 pub const TRANSMUTE: [&str; 4] = ["core", "intrinsics", "", "transmute"];
 
 pub const PTR_WRITE: [&str; 3] = ["core", "ptr", "write"];
 pub const PTR_DIRECT_WRITE: [&str; 5] = ["core", "ptr", "mut_ptr", "<impl *mut T>", "write"];
+pub const PTR_DIRECT_WRITE_SIMPLIFIED: [&str; 4] = ["core", "ptr", "mut_ptr", "write"];
 
 pub const PTR_AS_REF: [&str; 5] = ["core", "ptr", "const_ptr", "<impl *const T>", "as_ref"];
+pub const PTR_AS_REF_SIMPLIFIED: [&str; 4] = ["core", "ptr", "const_ptr", "as_ref"];
 pub const PTR_AS_MUT: [&str; 5] = ["core", "ptr", "mut_ptr", "<impl *mut T>", "as_mut"];
+pub const PTR_AS_MUT_SIMPLIFIED: [&str; 4] = ["core", "ptr", "mut_ptr", "as_mut"];
 pub const NON_NULL_AS_REF: [&str; 5] = ["core", "ptr", "non_nul", "NonNull", "as_ref"];
+pub const NON_NULL_AS_REF_SIMPLIFIED: [&str; 4] = ["core", "ptr", "non_null", "as_ref"];
 pub const NON_NULL_AS_MUT: [&str; 5] = ["core", "ptr", "non_nul", "NonNull", "as_mut"];
+pub const NON_NULL_AS_MUT_SIMPLIFIED: [&str; 4] = ["core", "ptr", "non_null", "as_mut"];
 
 pub const SLICE_GET_UNCHECKED: [&str; 4] = ["core", "slice", "<impl [T]>", "get_unchecked"];
+pub const SLICE_GET_UNCHECKED_SIMPLIFIED: [&str; 3] = ["core", "slice", "get_unchecked"];
 pub const SLICE_GET_UNCHECKED_MUT: [&str; 4] = ["core", "slice", "<impl [T]>", "get_unchecked_mut"];
+pub const SLICE_GET_UNCHECKED_MUT_SIMPLIFIED: [&str; 3] = ["core", "slice", "get_unchecked_mut"];
 
 pub const PTR_SLICE_FROM_RAW_PARTS: [&str; 3] = ["core", "ptr", "slice_from_raw_parts"];
 pub const PTR_SLICE_FROM_RAW_PARTS_MUT: [&str; 3] = ["core", "ptr", "slice_from_raw_parts_mut"];
@@ -50,6 +60,8 @@ pub const SLICE_FROM_RAW_PARTS_MUT: [&str; 3] = ["core", "slice", "from_raw_part
 pub const PTR_DROP_IN_PLACE: [&str; 3] = ["core", "ptr", "drop_in_place"];
 pub const PTR_DIRECT_DROP_IN_PLACE: [&str; 5] =
     ["core", "ptr", "mut_ptr", "<impl *mut T>", "drop_in_place"];
+pub const PTR_DIRECT_DROP_IN_PLACE_SIMPLIFIED: [&str; 4] =
+    ["core", "ptr", "mut_ptr", "drop_in_place"];
 
 pub struct PathSet {
     set: HashSet<Vec<Symbol>>,
@@ -79,12 +91,15 @@ pub static STRONG_LIFETIME_BYPASS_LIST: Lazy<PathSet> = Lazy::new(move || {
     PathSet::new(&[
         &PTR_READ,
         &PTR_DIRECT_READ,
+        &PTR_DIRECT_READ_SIMPLIFIED,
         //
         &INTRINSICS_COPY,
         &INTRINSICS_COPY_NONOVERLAPPING,
         //
         &VEC_SET_LEN,
+        &VEC_SET_LEN_ORIGINAL,
         &VEC_FROM_RAW_PARTS,
+        &VEC_FROM_RAW_PARTS_ORIGINAL,
     ])
 });
 
@@ -94,14 +109,21 @@ pub static WEAK_LIFETIME_BYPASS_LIST: Lazy<PathSet> = Lazy::new(move || {
         //
         &PTR_WRITE,
         &PTR_DIRECT_WRITE,
+        &PTR_DIRECT_WRITE_SIMPLIFIED,
         //
         &PTR_AS_REF,
+        &PTR_AS_REF_SIMPLIFIED,
         &PTR_AS_MUT,
+        &PTR_AS_MUT_SIMPLIFIED,
         &NON_NULL_AS_REF,
+        &NON_NULL_AS_REF_SIMPLIFIED,
         &NON_NULL_AS_MUT,
+        &NON_NULL_AS_MUT_SIMPLIFIED,
         //
         &SLICE_GET_UNCHECKED,
+        &SLICE_GET_UNCHECKED_SIMPLIFIED,
         &SLICE_GET_UNCHECKED_MUT,
+        &SLICE_GET_UNCHECKED_MUT_SIMPLIFIED,
         //
         &PTR_SLICE_FROM_RAW_PARTS,
         &PTR_SLICE_FROM_RAW_PARTS_MUT,
@@ -111,7 +133,7 @@ pub static WEAK_LIFETIME_BYPASS_LIST: Lazy<PathSet> = Lazy::new(move || {
 });
 
 pub static GENERIC_FN_LIST: Lazy<PathSet> =
-    Lazy::new(move || PathSet::new(&[&PTR_DROP_IN_PLACE, &PTR_DIRECT_DROP_IN_PLACE]));
+    Lazy::new(move || PathSet::new(&[&PTR_DROP_IN_PLACE, &PTR_DIRECT_DROP_IN_PLACE, &PTR_DIRECT_DROP_IN_PLACE_SIMPLIFIED]));
 
 type PathMap = HashMap<Vec<Symbol>, UnsafeDataflowBehaviorFlag>;
 
@@ -121,13 +143,16 @@ pub static STRONG_BYPASS_MAP: Lazy<PathMap> = Lazy::new(move || {
     hashmap! {
         PTR_READ.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::READ_FLOW,
         PTR_DIRECT_READ.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::READ_FLOW,
+        PTR_DIRECT_READ_SIMPLIFIED.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::READ_FLOW,
         //
         INTRINSICS_COPY.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::COPY_FLOW,
         INTRINSICS_COPY_NONOVERLAPPING.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::COPY_FLOW,
         //
         VEC_SET_LEN.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::VEC_SET_LEN,
+        VEC_SET_LEN_ORIGINAL.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::VEC_SET_LEN,
         //
         VEC_FROM_RAW_PARTS.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::VEC_FROM_RAW,
+        VEC_FROM_RAW_PARTS_ORIGINAL.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::VEC_FROM_RAW,
     }
 });
 
@@ -139,14 +164,21 @@ pub static WEAK_BYPASS_MAP: Lazy<PathMap> = Lazy::new(move || {
         //
         PTR_WRITE.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::WRITE_FLOW,
         PTR_DIRECT_WRITE.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::WRITE_FLOW,
+        PTR_DIRECT_WRITE_SIMPLIFIED.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::WRITE_FLOW,
         //
         PTR_AS_REF.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::PTR_AS_REF,
+        PTR_AS_REF_SIMPLIFIED.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::PTR_AS_REF,
         PTR_AS_MUT.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::PTR_AS_REF,
+        PTR_AS_MUT_SIMPLIFIED.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::PTR_AS_REF,
         NON_NULL_AS_REF.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::PTR_AS_REF,
+        NON_NULL_AS_REF_SIMPLIFIED.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::PTR_AS_REF,
         NON_NULL_AS_MUT.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::PTR_AS_REF,
+        NON_NULL_AS_MUT_SIMPLIFIED.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::PTR_AS_REF,
         //
         SLICE_GET_UNCHECKED.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::SLICE_UNCHECKED,
+        SLICE_GET_UNCHECKED_SIMPLIFIED.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::SLICE_UNCHECKED,
         SLICE_GET_UNCHECKED_MUT.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::SLICE_UNCHECKED,
+        SLICE_GET_UNCHECKED_MUT_SIMPLIFIED.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::SLICE_UNCHECKED,
         //
         PTR_SLICE_FROM_RAW_PARTS.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::SLICE_FROM_RAW,
         PTR_SLICE_FROM_RAW_PARTS_MUT.iter().map(|p| Symbol::intern(p)).collect::<Vec<_>>() => BehaviorFlag::SLICE_FROM_RAW,

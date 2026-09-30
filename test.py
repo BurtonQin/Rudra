@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 import subprocess
 import tempfile
-import tomlkit
+try:
+    import tomllib
+except ImportError:
+    import tomlkit as tomllib
 import traceback
 import os
 import os.path
@@ -36,7 +39,7 @@ class TestCase:
             # ````
             idx = lines.index("```\n")
             toml_str = ''.join(lines[2:idx])
-            return tomlkit.loads(toml_str)
+            return tomllib.loads(toml_str)
 
     def __repr__(self):
         return "TestCase(%s)" % self.path
@@ -97,7 +100,7 @@ def run_test(test_case):
                 # We manually converts some characters inside toml strings
                 # Match this list with src/report.rs
                 reports_str = report_file_handle.read().replace("\t", "\\t").replace("\u001B", "\\u001B")
-                reports = tomlkit.loads(reports_str)
+                reports = tomllib.loads(reports_str)
             expected_analyzers = set(metadata["expected_analyzers"])
             if "reports" in reports:
                 reported_analyzers = set(map(extract_analyzer_name, reports["reports"]))
@@ -132,12 +135,15 @@ def handle_result(test_result):
     print(str(test_result))
 
 
-files = [os.path.join(dp, f) for dp, dn, fn in os.walk("tests") for f in fn]
+if len(sys.argv) > 1:
+    files = sys.argv[1:]
+else:
+    files = [os.path.join(dp, f) for dp, dn, fn in os.walk("tests") for f in fn]
 
-test_cases = filter(
+test_cases = list(filter(
     lambda t: t is not None,
     map(lambda path: TestCase.create_test_case(path), files)
-)
+))
 
 if __name__ == "__main__":
     with ThreadPool(16) as pool:
