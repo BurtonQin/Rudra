@@ -33,6 +33,7 @@ pub mod log;
 pub mod paths;
 pub mod prelude;
 pub mod report;
+pub(crate) mod sarif;
 pub mod utils;
 pub mod visitor;
 

@@ -39,9 +39,36 @@ pub fn init_report_logger(report_logger: Box<dyn ReportLogger>) -> FlushHandle {
     FlushHandle { _priv: () }
 }
 
+/// The serialization format of the report file written to
+/// `RUDRA_REPORT_PATH`, selected by `RUDRA_REPORT_FORMAT`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportFormat {
+    /// Native TOML report list (the historical output).
+    Toml,
+    /// One SARIF 2.1.0 log (JSON).
+    Sarif,
+}
+
+impl ReportFormat {
+    fn from_env() -> Self {
+        match env::var("RUDRA_REPORT_FORMAT").ok().as_deref() {
+            None | Some("") | Some("toml") => ReportFormat::Toml,
+            Some("sarif") => ReportFormat::Sarif,
+            Some(other) => panic!(
+                "unknown RUDRA_REPORT_FORMAT {:?}; supported values are \
+                 \"toml\" (default) and \"sarif\"",
+                other
+            ),
+        }
+    }
+}
+
 pub fn default_report_logger() -> Box<dyn ReportLogger> {
     match env::var_os("RUDRA_REPORT_PATH") {
-        Some(val) => Box::new(FileLogger::new(val)),
+        Some(val) => match ReportFormat::from_env() {
+            ReportFormat::Toml => Box::new(FileLogger::new(val)),
+            ReportFormat::Sarif => Box::new(SarifFileLogger::new(val)),
+        },
         None => Box::new(StderrLogger::new()),
     }
 }
@@ -68,11 +95,11 @@ impl fmt::Display for ReportLevel {
 
 #[derive(Serialize)]
 pub struct Report {
-    level: ReportLevel,
-    analyzer: Cow<'static, str>,
-    description: Cow<'static, str>,
-    location: String,
-    source: String,
+    pub(crate) level: ReportLevel,
+    pub(crate) analyzer: Cow<'static, str>,
+    pub(crate) description: Cow<'static, str>,
+    pub(crate) location: String,
+    pub(crate) source: String,
 }
 
 impl Report {
@@ -219,6 +246,45 @@ impl ReportLogger for FileLogger {
                 .replace("\\t", "\t"),
             )
             .expect("cannot write Rudra report to file");
+        }
+    }
+}
+
+/// Writes the collected reports as one SARIF 2.1.0 log (JSON) to
+/// `RUDRA_REPORT_PATH`; selected by `RUDRA_REPORT_FORMAT=sarif`.
+struct SarifFileLogger {
+    reports: Mutex<Vec<Report>>,
+    file_path: PathBuf,
+}
+
+impl SarifFileLogger {
+    fn new<T>(val: T) -> Self
+    where
+        T: Into<PathBuf>,
+    {
+        SarifFileLogger {
+            reports: Mutex::new(Vec::new()),
+            file_path: val.into(),
+        }
+    }
+}
+
+impl ReportLogger for SarifFileLogger {
+    fn log(&self, report: Report) {
+        self.reports.lock().push(report);
+    }
+
+    fn flush(&self) {
+        let reports = self.reports.lock();
+        if !reports.is_empty() {
+            let sarif = crate::sarif::reports_to_sarif(&reports)
+                .expect("non-empty report set produces a SARIF log");
+            fs::write(
+                &self.file_path,
+                serde_json::to_string_pretty(&sarif)
+                    .expect("failed to serialize Rudra SARIF report"),
+            )
+            .expect("cannot write Rudra SARIF report to file");
         }
     }
 }
